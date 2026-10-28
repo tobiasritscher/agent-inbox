@@ -25,6 +25,8 @@ EVENTS = HOME / '.local/state/busybar-agents/events'
 STATE = HOME / '.local/state/agent-inbox'
 PORT = int(os.environ.get('AGENT_INBOX_PORT', 8787))
 TOKEN = secrets.token_urlsafe(24)  # CSRF-Schutz: nur die eigene Seite darf POSTen
+# DNS-Rebinding: fremde Domains, die auf 127.0.0.1 zeigen, dürfen weder Seite (Token) noch API lesen.
+ALLOWED_HOSTS = {f'127.0.0.1:{PORT}', f'localhost:{PORT}'}
 TAIL_BYTES = 1_500_000
 
 # Gewichte bewusst im Code, jede Karte zeigt ihre Rechnung.
@@ -287,6 +289,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_GET(self):
+        if self.headers.get('Host') not in ALLOWED_HOSTS:
+            return self._send(403, {'error': 'host'})
         if self.path == '/':
             html = (Path(__file__).parent / 'index.html').read_text().replace('__TOKEN__', TOKEN)
             self._send(200, html.encode(), 'text/html; charset=utf-8')
@@ -302,7 +306,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {'error': 'not found'})
 
     def do_POST(self):
-        if self.headers.get('X-Inbox-Token') != TOKEN:
+        origin = self.headers.get('Origin')
+        if (self.headers.get('Host') not in ALLOWED_HOSTS or self.headers.get('X-Inbox-Token') != TOKEN
+                or (origin and origin.removeprefix('http://') not in ALLOWED_HOSTS)):
             return self._send(403, {'error': 'token'})
         try:
             body = json.loads(self.rfile.read(int(self.headers.get('Content-Length', 0))) or '{}')
